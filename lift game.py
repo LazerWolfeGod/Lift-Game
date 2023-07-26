@@ -8,6 +8,9 @@ ui = pyui.UI()
 class funcer:
     def __init__(self,level,main):
         self.func = lambda: main.gengame(level)
+class funcerk:
+    def __init__(self,ID,main):
+        self.func = lambda: main.killpopup(ID)
 
 class image:
     def load(name,colorkey=(255,255,255)):
@@ -17,8 +20,18 @@ class image:
             path = os.path.abspath(".")
         fullpath = os.path.join(path,name)
         return pygame.image.load(fullpath)
+    def seperate(surf,w,h):
+        images = []
+        for a in range(round(surf.get_width()/w)):
+            images.append(pygame.Surface((w,h)))
+            images[-1].blit(surf,(-a*w,0))
+        return images
+    
     doorleft = load('assets\\door.png')
     doorright = pygame.transform.flip(doorleft,True,False)
+
+    coins = seperate(load('assets\\coins.png'),67,66)
+    coinsgrey = seperate(load('assets\\coin grey.png'),67,66)
 
 def personmaker(size,target):
     if target == 0:
@@ -51,7 +64,7 @@ class Person:
         self.speed = max(random.gauss(self.size/20,0.3),0.5)
         self.image = personmaker(self.size,self.targetfloor)
 
-        self.patience = max(random.gauss(1000,300),300)*self.level[1]/(self.speed**0.6)
+        self.patience = max(random.gauss(1000,300),300)*((self.level[1]+1)**0.5)*len(lifts)/(self.speed**0.6)
         self.maxpatience = self.patience
 
         self.delay = 0
@@ -131,18 +144,20 @@ class Person:
         self.x = lift.x
         self.lift = -1
         self.floor = lift.floor
-        self.completed = True
+        if self.floor == self.targetfloor: self.completed = True
         if self.angry: self.movetarget = -100
         else: self.movetarget = self.floorwidth+100
         
-        
     def draw(self,offset):
         if self.lift == -1:
-            progress = min(max((self.patience/self.maxpatience),0),1)
             rec = self.lifts[0].rects[self.floor]
-            screen.blit(self.image,(self.x-offset[0],rec.y+rec.height-self.image.get_height()))
-            pygame.draw.rect(screen,(150,150,150),pygame.Rect(self.x-offset[0]-self.image.get_width()*0.2,rec.y+rec.height-self.image.get_height()-10,self.image.get_width()*1.4,7))
-            pygame.draw.rect(screen,(100+150*(1-progress),250*progress,60),pygame.Rect(self.x-offset[0]-self.image.get_width()*0.2+1,rec.y+rec.height-self.image.get_height()-10+1,(self.image.get_width()*1.4-2)*progress,5))
+            self.y = rec.y+rec.height+offset[1]
+            self.blitsurf(screen,self.x-offset[0],self.y-offset[1])
+    def blitsurf(self,surf,x,y):
+        progress = min(max((self.patience/self.maxpatience),0),1)
+        surf.blit(self.image,(x,y-self.image.get_height()))
+        pyui.draw.pichart(surf,(x+self.image.get_width()*0.5,y-self.image.get_height()-10),8,(150,150,150),math.pi*2*progress,0,(100+150*(1-progress),250*progress,60),1)
+
 class Lift:
     def __init__(self,x,width,speed,doorspeed,loadspeed,floors):
         self.x = x
@@ -152,7 +167,7 @@ class Lift:
         self.doorspeed = doorspeed
         self.loadspeed = loadspeed
         self.floors = floors
-        self.capacity = 400
+        self.capacity = 120
 
         self.ldoor = pygame.transform.scale(image.doorleft,(self.width/2,self.height))
         self.rdoor = pygame.transform.scale(image.doorright,(self.width/2,self.height))
@@ -233,10 +248,8 @@ class Lift:
         d = 0
         if shut:
             d = 1-self.open
-            x = 2
             for a in self.people:
-                surf.blit(a.image,(a.liftpos,self.height-a.image.get_height()))
-                x+=(a.image.get_width()+2)
+                a.blitsurf(surf,a.liftpos,self.height)
             
         surf.blit(self.ldoor,(-self.width/2*d,0))
         surf.blit(self.rdoor,(self.width/2+self.width/2*d,0))
@@ -250,19 +263,20 @@ class Building:
         self.liftnum = self.level[3]
         self.offset = [-350,-400]
         self.lifts = [Lift(a*140,80,0.01,0.05,30,self.floornum) for a in range(self.liftnum)]
+        
         self.people = []
         self.peoplecount = 0
         self.score = 0
         self.coins = 0
-        self.permacoins = 0
-        ## angry, complete, score, coins, permacoins
-        self.stats = [0,0,0,0,0]
+        ## angry, complete, score, coins
+        self.stats = [0,0,0,0]
+        self.popups = []
 
         self.delay = 0
         self.prevframe = time.time()
 
-        if newgui:
-            self.makegui()
+        if newgui: self.makegui()
+        else: self.updategui()
     def makegui(self):
         ui.maketext(0,0,str(self.score),40,'game','score display',anchor=('w-10',10),objanchor=('w',0),backingcol=(255,255,255))
         
@@ -276,6 +290,9 @@ class Building:
         if mprs[2]:
             self.offset[0]-=rel[0]
             self.offset[1]-=rel[1]
+        for a in self.popups:
+            a.textoffsetx = -self.offset[0]
+            a.textoffsety = -self.offset[1]
 
         for a in self.lifts:
             tempoffset = [self.offset[0],self.offset[1]-animation]
@@ -292,7 +309,6 @@ class Building:
             if self.level[0] <= 0 and len(self.people) == 0:
                 self.stats[2] = self.score
                 self.stats[3] = self.coins
-                self.stats[4] = self.permacoins
                 return True
 
         self.delay-=tickmul
@@ -321,31 +337,49 @@ class Building:
         new = base*(person.patience/person.maxpatience)
         if person.angry:
             self.stats[0]+=1
-            new = base*-0.5
+            new = base*-1
             if person.completed:
                 new*=0.5
         self.score+=int(round(new))
         if person.completed:
-            self.coins+=1
-            if person.patience>person.maxpatience*0.4:
-                self.permacoins+=1
+            self.stats[1]+=1
+            if person.patience>person.maxpatience*0:
+                self.coins+=1
+                main.coins+=1
+                ui.IDs['coin display'].text = str(main.coins)
+                ui.IDs['coin display'].refresh(ui)
+                self.makepopup('coin',(person.x+person.image.get_width()/2,person.y-person.image.get_height()))
+        self.updategui()
+    def updategui(self):
         ui.IDs['score display'].text = str(self.score)
         ui.IDs['score display'].refresh(ui)
         ui.IDs['score display'].resetcords(ui)
 
+    def makepopup(self,typ,cords):
+        if typ == 'coin':
+            self.popups.append(ui.maketext(cords[0],cords[1],'',33,'game','coin'+str(cords),img=image.coins,center=True,textoffsetx=-self.offset[0],textoffsety=-self.offset[1]))
+            func = funcerk(self.popups[-1].ID,self)
+            ui.makeanimation(self.popups[-1].ID,'current',(0,-100),'sinin',command=func.func,relativemove=True)
+    def killpopup(self,ID):
+        self.popups.remove(ui.IDs[ID])
+        ui.delete(ID)
+        
 class Main:
     def __init__(self):
         ## people, patience, arrival speed, lifts, floors, coin multiplier
         self.levels = [[3,10,300,1,2,1],
                        [10,2,250,2,2,1],
                        [20,1.8,180,2,3,1.4],
-                       [50,1,10,2,3,1.4]]
+                       [50,1,10,2,3,1.4],
+                       [1,10,10,1,2,1]]
         random.seed(0)
         for a in range(len(self.levels)):
             self.levels[a].append(random.randint(0,1000))
-        
-        self.makegui()
         self.building = 0
+        
+        self.coins = 0
+
+        self.makegui()
     def makegui(self):
         self.titleglow = 0
         trans = 7
@@ -358,8 +392,12 @@ class Main:
         ui.makebutton(0,160,'Upgrades',60,lambda: ui.movemenu('upgrades','left'),roundedcorners=6,verticalspacing=6,anchor=('w/2','h/2'),center=True)
         ui.makerect(0,0,1,1,menu='game',ID='animation tracker',enabled=False)
 
+        ## upgrades
+        ui.maketext(10,10,'',33,'universal',img=image.coins,menuexceptions=['complete'])
+        ui.maketext(52,31,str(self.coins),40,'universal','coin display',objanchor=(0,'h/2'),backingcol=(255,255,255),menuexceptions=['complete'])
+            
         ## levels
-        ui.maketext(20,20,'Levels',50,'levels',backingcol=(255,255,255))
+##        ui.maketext(100,20,'Levels',50,'levels',backingcol=(255,255,255))
 
         data = []
         for a in range(len(self.levels)):
@@ -369,6 +407,9 @@ class Main:
 
         ## complete menu
         ui.makewindowedmenu(0,0,400,300,'complete','game',anchor=('w/2','h/2'),center=True,roundedcorners=10)
+        ui.maketext(200,10,'Level - Complete',45,'complete','level complete title',backingcol=(115,115,115),objanchor=('w/2',0))
+        ui.maketable(10,50,[[0,0]],menu='complete',boxwidth=[200,174],boxheight=[50,50,50,50],textsize=30,backingdraw=False,borderdraw=False,col=(115,115,115),ID='complete table')
+        
     def gengame(self,level=-1):
         if level!=-1: self.level = self.levels[level][:]
         else: self.level = [10000000,1,180,2,3,1,time.time()]
@@ -378,6 +419,14 @@ class Main:
         else:
             self.building = Building(self.level,False)
         ui.movemenu('game','up')
+    def finishgame(self):
+        ui.movemenu('complete','down')
+        del ui.backchain[-1]
+        self.coins+=self.building.stats[3]
+        ui.IDs['coin display'].text = str(self.coins)
+        ui.IDs['coin display'].refresh(ui)
+        ui.IDs['complete table'].data = [[a,self.building.stats[i]] for i,a in enumerate(['Angered','Completed','score','Coins'])]
+        ui.IDs['complete table'].refresh(ui)
     def main(self):
         done = False
         clock = pygame.time.Clock()
@@ -390,8 +439,7 @@ class Main:
             if ui.activemenu == 'game' or ui.activemenu == 'complete':
                 if ui.activemenu == 'game':
                     if self.building.tick(ui.IDs['animation tracker'].y):
-                        ui.movemenu('complete','down')
-                        del ui.backchain[-1]
+                        self.finishgame()
                 self.building.draw(ui.IDs['animation tracker'].y)
             elif ui.activemenu == 'main':
                 self.titleglow+=1
