@@ -19,7 +19,9 @@ class image:
         except Exception:
             path = os.path.abspath(".")
         fullpath = os.path.join(path,name)
-        return pygame.image.load(fullpath)
+        img = pygame.image.load(fullpath)
+        img.set_colorkey(colorkey)
+        return img
     def seperate(surf,w,h):
         images = []
         for a in range(round(surf.get_width()/w)):
@@ -30,8 +32,12 @@ class image:
     doorleft = load('assets\\door.png')
     doorright = pygame.transform.flip(doorleft,True,False)
 
-    coins = seperate(load('assets\\coins.png'),67,66)
-    coinsgrey = seperate(load('assets\\coin grey.png'),67,66)
+    coins = seperate(load('assets\\coins.png',(0,0,0)),67,66)
+##    coinsgrey = seperate(load('assets\\coin grey.png'),67,66)
+    raincloud = load('assets\\raincloud.png')
+
+    ## coin: https://www.shutterstock.com/image-vector/set-rotating-coins-popular-currency-symbols-1572677185?consentChanged=true&irclickid=SwCW4w2KrxyPRh5Vylw%3A0xWXUkFwFdTwPwibyU0&irgwc=1&utm_campaign=Eezy%2C%20LLC&utm_content=1636534&utm_medium=Affiliate&utm_source=38919&utm_term=www.vecteezy.com
+    ## raincloud: https://www.istockphoto.com/vector/dark-clouds-with-lightning-thunderstorm-icon-vector-illustration-gm1311259120-400409859
 
 def personmaker(size,target):
     if target == 0:
@@ -153,6 +159,8 @@ class Person:
             rec = self.lifts[0].rects[self.floor]
             self.y = rec.y+rec.height+offset[1]
             self.blitsurf(screen,self.x-offset[0],self.y-offset[1])
+            if self.angry:
+                screen.blit(image.raincloud,(self.x-offset[0]+self.image.get_width()*0.5-image.raincloud.get_width()*0.5,self.y-offset[1]-self.image.get_height()-15-image.raincloud.get_height()))
     def blitsurf(self,surf,x,y):
         progress = min(max((self.patience/self.maxpatience),0),1)
         surf.blit(self.image,(x,y-self.image.get_height()))
@@ -340,6 +348,8 @@ class Building:
             new = base*-1
             if person.completed:
                 new*=0.5
+            self.makepopup('cloud',(person.x+person.image.get_width()/2,person.y-person.image.get_height()-10))
+            
         self.score+=int(round(new))
         if person.completed:
             self.stats[1]+=1
@@ -356,8 +366,10 @@ class Building:
         ui.IDs['score display'].resetcords(ui)
 
     def makepopup(self,typ,cords):
-        if typ == 'coin':
-            self.popups.append(ui.maketext(cords[0],cords[1],'',33,'game','coin'+str(cords),img=image.coins,center=True,textoffsetx=-self.offset[0],textoffsety=-self.offset[1]))
+        if typ in ['coin','cloud']:
+            if typ == 'coin': img = image.coins
+            elif typ == 'cloud': img = image.raincloud
+            self.popups.append(ui.maketext(cords[0],cords[1],'',33,'game','popup '+typ,img=img,center=True,textoffsetx=-self.offset[0],textoffsety=-self.offset[1]))
             func = funcerk(self.popups[-1].ID,self)
             ui.makeanimation(self.popups[-1].ID,'current',(0,-100),'sinin',command=func.func,relativemove=True)
     def killpopup(self,ID):
