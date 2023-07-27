@@ -11,6 +11,9 @@ class funcer:
 class funcerk:
     def __init__(self,ID,main):
         self.func = lambda: main.killpopup(ID)
+class funcerbuy:
+    def __init__(self,item,cost,main):
+        self.func = lambda: main.buy(item,cost)
 
 class image:
     def load(name,colorkey=(255,255,255)):
@@ -54,7 +57,7 @@ def personmaker(size,target):
     return surf
 
 class Person:
-    def __init__(self,floor,target,lifts,level):
+    def __init__(self,floor,target,lifts,upgrades,level):
         self.floor = floor
         self.targetfloor = target
         self.level = level
@@ -67,7 +70,7 @@ class Person:
         self.floorwidth = (self.lifts[-1].x+self.lifts[-1].width)
         
         self.size = random.randint(10,40)
-        self.speed = max(random.gauss(self.size/20,0.3),0.5)
+        self.speed = max(random.gauss(self.size/20,0.3),0.5)*(0.2*upgrades['floor speed']+1)
         self.image = personmaker(self.size,self.targetfloor)
 
         self.patience = max(random.gauss(1000,300),300)*((self.level[1]+1)**0.5)*len(lifts)/(self.speed**0.6)
@@ -86,7 +89,7 @@ class Person:
                 if self.completed or self.angry:
                     return True
                 if self.targetlift in self.available:
-                    self.lifts[self.targetlift].attemptload(tickmul,self)
+                    self.lifts[self.targetlift].attemptload(self)
                     if self in self.lifts[self.targetlift].people:
                         self.lift = self.targetlift
                         self.targetlift = -1
@@ -107,7 +110,7 @@ class Person:
         if self.lift == -1 and not self.completed:
             self.available = []
             for i,a in enumerate(self.lifts):
-                if a.floor == self.floor and a.open == 0 and a.capacity>sum([a.size for a in a.people])+self.size:
+                if a.floor == self.floor and a.open == 0 and a.capacity>=len(a.people)+1:
                     self.available.append(i)
             self.available.sort(key=lambda i:abs(self.lifts[i].x-self.x))
             if self.available!=[]:
@@ -167,15 +170,17 @@ class Person:
         pyui.draw.pichart(surf,(x+self.image.get_width()*0.5,y-self.image.get_height()-10),8,(150,150,150),math.pi*2*progress,0,(100+150*(1-progress),250*progress,60),1)
 
 class Lift:
-    def __init__(self,x,width,speed,doorspeed,loadspeed,floors):
+    def __init__(self,x,width,upgrades,floors):
         self.x = x
         self.width = width
         self.height = self.width*1.75
-        self.speed = speed
-        self.doorspeed = doorspeed
-        self.loadspeed = loadspeed
+        
+        self.speed = 1.001**upgrades['lift speed']-1+0.004
+        self.doorspeed = 1.005**upgrades['door speed']-1+0.006
+        self.loadspeed = 400/(upgrades['load speed']+8)
+        self.capacity = upgrades['lift capacity']
         self.floors = floors
-        self.capacity = 120
+##        print(self.speed,self.doorspeed,self.loadspeed,self.capacity)
 
         self.ldoor = pygame.transform.scale(image.doorleft,(self.width/2,self.height))
         self.rdoor = pygame.transform.scale(image.doorright,(self.width/2,self.height))
@@ -217,6 +222,7 @@ class Lift:
             self.open-=self.doorspeed*tickmul
             self.open = max(self.open,0)
     def idle(self,tickmul):
+        self.delay-=tickmul
         if self.open == 0:
             if self.people!=[]:
                 off = -1
@@ -224,15 +230,13 @@ class Lift:
                     if a.targetfloor == self.floor or a.angry:
                         off = i
                 if off!=-1:
-                    self.delay-=tickmul
                     if self.delay<0:
                         self.people[off].unload(self)
                         self.people.remove(self.people[off])
                         self.delay = self.loadspeed
-    def attemptload(self,tickmul,person):
-        self.delay-=tickmul
-        if self.delay<0:
-            if self.capacity>sum([a.size for a in self.people])+person.size:
+    def attemptload(self,person):
+        if self.delay<-1:
+            if self.capacity>=len(self.people)+1:
                 self.delay = self.loadspeed
                 i = 0
                 pos = self.liftposes[i]
@@ -264,13 +268,14 @@ class Lift:
         return surf
         
 class Building:
-    def __init__(self,level,newgui=True):
-        ## people, patience, arrival speed, lifts, floors, coin multiplier
+    def __init__(self,level,userdata,newgui=True):
+        ## people, patience, arrival speed, floors, score mi
         self.level = level
-        self.floornum = self.level[4]
-        self.liftnum = self.level[3]
+        self.userdata = userdata
+        self.floornum = self.level[3]
+        self.liftnum = userdata['upgrades']['lifts']
         self.offset = [-350,-400]
-        self.lifts = [Lift(a*140,80,0.01,0.05,30,self.floornum) for a in range(self.liftnum)]
+        self.lifts = [Lift(a*140,80,userdata['upgrades'],self.floornum) for a in range(self.liftnum)]
         
         self.people = []
         self.peoplecount = 0
@@ -287,6 +292,8 @@ class Building:
         else: self.updategui()
     def makegui(self):
         ui.maketext(0,0,str(self.score),40,'game','score display',anchor=('w-10',10),objanchor=('w',0),backingcol=(255,255,255))
+        ui.maketext(17,70,'',40,'game',img=personmaker(30,'G'),objanchor=(0,'h/2'),colorkey=(0,0,0))
+        ui.maketext(95,70,'3',40,'game',objanchor=(0,'h/2'),backingcol=(255,255,255),ID='person count')
         
     def tick(self,animation):
         tickmul = 60*(time.time()-self.prevframe)
@@ -330,7 +337,9 @@ class Building:
                 choices = [a for a in range(self.floornum)]
                 choices.remove(f)
                 t = random.choice(choices)
-                self.people.append(Person(f,t,self.lifts,self.level))
+                self.people.append(Person(f,t,self.lifts,self.userdata['upgrades'],self.level))
+                ui.IDs['person count'].text = str(self.level[0])
+                ui.IDs['person count'].refresh(ui)
         return False
         
     def draw(self,animation):
@@ -339,7 +348,10 @@ class Building:
             a.draw(tempoffset)
         for a in self.people:
             a.draw(tempoffset)
-
+        if self.level[0]>0: ang = math.pi*2*(self.delay/self.level[2])
+        else: ang = 0
+        pyui.draw.pichart(screen,(70*ui.scale,(70+animation)*ui.scale),15*ui.scale,ui.defaultcol,ang)
+            
     def addscore(self,person):
         base = 100
         new = base*(person.patience/person.maxpatience)
@@ -355,9 +367,8 @@ class Building:
             self.stats[1]+=1
             if person.patience>person.maxpatience*0:
                 self.coins+=1
-                main.coins+=1
-                ui.IDs['coin display'].text = str(main.coins)
-                ui.IDs['coin display'].refresh(ui)
+                main.userdata['coins']+=1
+                main.updatecoindisplay()
                 self.makepopup('coin',(person.x+person.image.get_width()/2,person.y-person.image.get_height()))
         self.updategui()
     def updategui(self):
@@ -378,18 +389,25 @@ class Building:
         
 class Main:
     def __init__(self):
-        ## people, patience, arrival speed, lifts, floors, coin multiplier
-        self.levels = [[3,10,300,1,2,1],
-                       [10,2,250,2,2,1],
-                       [20,1.8,180,2,3,1.4],
-                       [50,1,10,2,3,1.4],
-                       [1,10,10,1,2,1]]
+        ## people, patience, arrival speed, floors, score min
+        self.levels = [[3,10,300,2,100],
+                       [10,2,250,2,400],
+                       [20,1.8,180,3,800],
+                       [50,1.6,150,3,2700],
+                       [75,1.5,130,3,4500],
+                       [100,1.4,120,3,7000],
+                       [140,1.3,110,4,95000],
+                       [180,1.2,105,4,12500],
+                       [220,1.1,100,4,15000],
+                       [300,1.0,95,5,22000]]
+                       
+        self.loaddata()
+               
         random.seed(0)
         for a in range(len(self.levels)):
             self.levels[a].append(random.randint(0,1000))
         self.building = 0
-        
-        self.coins = 0
+
 
         self.makegui()
     def makegui(self):
@@ -406,39 +424,93 @@ class Main:
 
         ## upgrades
         ui.maketext(10,10,'',33,'universal',img=image.coins,menuexceptions=['complete'])
-        ui.maketext(52,31,str(self.coins),40,'universal','coin display',objanchor=(0,'h/2'),backingcol=(255,255,255),menuexceptions=['complete'])
+        ui.maketext(52,31,str(self.userdata['coins']),40,'universal','coin display',objanchor=(0,'h/2'),backingcol=(255,255,255),menuexceptions=['complete'])
+
+        for i,a in enumerate(list(self.userdata['upgrades'])):
+            ui.maketext(100,80+80*i,a,40,'upgrades',backingcol=(255,255,255),center=True)
+            self.makebuybar(a,200,80+80*i)
             
         ## levels
-##        ui.maketext(100,20,'Levels',50,'levels',backingcol=(255,255,255))
-
-        data = []
-        for a in range(len(self.levels)):
-            func = funcer(a,self)
-            data.append([f'Level {a+1}',ui.makebutton(0,0,'Play',30,func.func,roundedcorners=4,verticalspacing=4)])
-        ui.maketable(20,70,data,menu='levels',roundedcorners=4,boxwidth=[300,100],textsize=30)
+        ui.maketable(20,70,[[0,0]],menu='levels',roundedcorners=4,boxwidth=[400,300],textsize=30,verticalspacing=4,ID='level tables')
+        self.refreshleveltable()
 
         ## complete menu
         ui.makewindowedmenu(0,0,400,300,'complete','game',anchor=('w/2','h/2'),center=True,roundedcorners=10)
         ui.maketext(200,10,'Level - Complete',45,'complete','level complete title',backingcol=(115,115,115),objanchor=('w/2',0))
-        ui.maketable(10,50,[[0,0]],menu='complete',boxwidth=[200,174],boxheight=[50,50,50,50],textsize=30,backingdraw=False,borderdraw=False,col=(115,115,115),ID='complete table')
+        ui.maketable(10,50,[[0,0]],menu='complete',boxwidth=[200,174],boxheight=50,textsize=30,backingdraw=False,borderdraw=False,col=(115,115,115),ID='complete table')
         
     def gengame(self,level=-1):
         if level!=-1: self.level = self.levels[level][:]
         else: self.level = [10000000,1,180,2,3,1,time.time()]
 
         if self.building == 0:
-            self.building = Building(self.level,True)
+            self.building = Building(self.level[:],self.userdata,True)
         else:
-            self.building = Building(self.level,False)
+            self.building = Building(self.level[:],self.userdata,False)
         ui.movemenu('game','up')
     def finishgame(self):
+        levelnum = self.levels.index(self.level)
         ui.movemenu('complete','down')
         del ui.backchain[-1]
-        self.coins+=self.building.stats[3]
-        ui.IDs['coin display'].text = str(self.coins)
-        ui.IDs['coin display'].refresh(ui)
+        ui.IDs['level complete title'].text = f'Level {levelnum+1} Complete'
+        ui.IDs['level complete title'].refresh(ui)
         ui.IDs['complete table'].data = [[a,self.building.stats[i]] for i,a in enumerate(['Angered','Completed','score','Coins'])]
+        ui.IDs['complete table'].boxheight=45
         ui.IDs['complete table'].refresh(ui)
+
+        if self.userdata['highscores'][levelnum] == '-' or self.building.stats[2]>self.userdata['highscores'][levelnum]:
+            self.userdata['highscores'][levelnum] = self.building.stats[2]
+        self.userdata['unlocked'] = 1
+        while (self.userdata['highscores'][self.userdata['unlocked']-1] != '-' and self.userdata['highscores'][self.userdata['unlocked']-1]>self.levels[self.userdata['unlocked']-1][4]):
+            self.userdata['unlocked']+=1
+        self.refreshleveltable()
+        self.storedata()
+            
+    def refreshleveltable(self):
+        ui.IDs['level tables'].wipe(ui)
+        data = []
+        for a in range(len(self.levels)):
+            func = funcer(a,self)
+            if a<self.userdata['unlocked']: data.append([ui.makebutton(0,0,f'Level {a+1}',30,func.func,roundedcorners=4,verticalspacing=4)])
+            else: data.append([ui.makebutton(0,0,'{lock scale=0.6}',30,roundedcorners=4,verticalspacing=4,clickdownsize=0)])
+            data[-1].append(f"{self.userdata['highscores'][a]}/{self.levels[a][4]}")
+        ui.IDs['level tables'].data = data
+        ui.IDs['level tables'].refresh(ui)
+    def makebuybar(self,item,x=0,y=0):
+        upgrades = 20
+        if item+'buybar' in ui.IDs:
+            ui.IDs[item+'buybar'].wipe(ui)
+        else:
+            ui.maketable(x,y-19,[[]],menu='upgrades',ID=item+'buybar',roundedcorners=4,boxwidth=[60,40]+[20 for a in range(upgrades)]+[40])
+        cost = 2**self.userdata['real upgrades'][item]
+        if item == 'lifts': cost = (cost**2)*2
+        elif item == 'lift capacity': cost*=3
+        
+        func = funcerbuy(item,cost,self)
+        data = [ui.makebutton(0,0,str(cost),30,func.func,roundedcorners=4),'-']
+        for a in range(upgrades):
+            col = (120,120,120)
+            if a<self.userdata['upgrades'][item]: col = (120,160,120)
+            if a<self.userdata['real upgrades'][item]: col = (100,250,140)
+            data.append(ui.maketext(0,0,'',10,backingcol=col,roundedcorners=4))
+        data.append('+')
+        ui.IDs[item+'buybar'].data = [data]
+        ui.IDs[item+'buybar'].refresh(ui)
+                        
+                
+    def buy(self,item,cost):
+        if self.userdata['coins']>=cost:
+            if self.userdata['real upgrades'][item]<20:
+                self.userdata['coins']-=cost
+                self.userdata['real upgrades'][item]+=1
+                self.userdata['upgrades'][item]+=1
+                self.makebuybar(item)
+                self.updatecoindisplay()
+                self.storedata()
+    def updatecoindisplay(self):
+        ui.IDs['coin display'].text = str(self.userdata['coins'])
+        ui.IDs['coin display'].refresh(ui) 
+        
     def main(self):
         done = False
         clock = pygame.time.Clock()
@@ -461,8 +533,25 @@ class Main:
             ui.rendergui(screen)
             pygame.display.flip()
             clock.tick(60)
-        pygame.quit() 
+        pygame.quit()
 
+    def storedata(self):
+        with open(pyui.resourcepath('assets\\data.txt'),'w') as f:
+            f.write(str(self.userdata))
+    def loaddata(self):
+        if not os.path.isfile(pyui.resourcepath('assets\\data.txt')):
+            self.cleardata()
+        with open(pyui.resourcepath('assets\\data.txt'),'r') as f:
+            item = f.readlines()[0]
+        exec('globaluserdata = '+item,globals())
+        self.userdata = globaluserdata
+    def cleardata(self):
+        self.userdata = {'unlocked':1,'highscores':['-' for a in range(len(self.levels))],'coins':0,
+                     'upgrades':{'lifts':1,'lift speed':1,'load speed':1,'door speed':1,'lift capacity':1,'floor speed':1}}
+        self.userdata['real upgrades'] = {}
+        for a in list(self.userdata['upgrades']):
+            self.userdata['real upgrades'][a] = self.userdata['upgrades'][a]
+        self.storedata()
 main = Main()
 main.main()
 
