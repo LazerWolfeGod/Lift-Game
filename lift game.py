@@ -14,6 +14,12 @@ class funcerk:
 class funcerbuy:
     def __init__(self,item,cost,main):
         self.func = lambda: main.buy(item,cost)
+class funcersl:
+    def __init__(self,item,main):
+        self.func = lambda: main.shiftleft(item)
+class funcersr:
+    def __init__(self,item,main):
+        self.func = lambda: main.shiftright(item)
 
 class image:
     def load(name,colorkey=(255,255,255)):
@@ -175,9 +181,9 @@ class Lift:
         self.width = width
         self.height = self.width*1.75
         
-        self.speed = 1.001**upgrades['lift speed']-1+0.004
+        self.speed = 1.0013**upgrades['lift speed']-1+0.004
         self.doorspeed = 1.005**upgrades['door speed']-1+0.006
-        self.loadspeed = 400/(upgrades['load speed']+8)
+        self.loadspeed = 45-(upgrades['load speed']*2.2)
         self.capacity = upgrades['lift capacity']
         self.floors = floors
 ##        print(self.speed,self.doorspeed,self.loadspeed,self.capacity)
@@ -380,7 +386,7 @@ class Building:
         if typ in ['coin','cloud']:
             if typ == 'coin': img = image.coins
             elif typ == 'cloud': img = image.raincloud
-            self.popups.append(ui.maketext(cords[0],cords[1],'',33,'game','popup '+typ,img=img,center=True,textoffsetx=-self.offset[0],textoffsety=-self.offset[1]))
+            self.popups.append(ui.maketext(cords[0],cords[1],'',33,'game','popup '+typ,img=img,center=True,textoffsetx=-self.offset[0],textoffsety=-self.offset[1],scalesize=False))
             func = funcerk(self.popups[-1].ID,self)
             ui.makeanimation(self.popups[-1].ID,'current',(0,-100),'sinin',command=func.func,relativemove=True)
     def killpopup(self,ID):
@@ -396,10 +402,16 @@ class Main:
                        [50,1.6,150,3,2700],
                        [75,1.5,130,3,4500],
                        [100,1.4,120,3,7000],
-                       [140,1.3,110,4,95000],
-                       [180,1.2,105,4,12500],
-                       [220,1.1,100,4,15000],
-                       [300,1.0,95,5,22000]]
+                       [110,1.3,120,3,9000],
+                       [120,1.2,120,3,10500],
+                       [130,1.1,120,4,11500],
+                       [140,1.0,120,4,12500],
+                       [150,0.9,110,4,14000],
+                       [160,0.8,110,4,15000],
+                       [170,0.75,105,4,16000],
+                       [180,0.7,100,4,17000],
+                       [190,0.6,100,4,18000],
+                       [200,0.5,95,5,19500]]
                        
         self.loaddata()
                
@@ -438,7 +450,8 @@ class Main:
         ui.makewindowedmenu(0,0,400,300,'complete','game',anchor=('w/2','h/2'),center=True,roundedcorners=10)
         ui.maketext(200,10,'Level - Complete',45,'complete','level complete title',backingcol=(115,115,115),objanchor=('w/2',0))
         ui.maketable(10,50,[[0,0]],menu='complete',boxwidth=[200,174],boxheight=50,textsize=30,backingdraw=False,borderdraw=False,col=(115,115,115),ID='complete table')
-        
+
+        self.updatecoindisplay()
     def gengame(self,level=-1):
         if level!=-1: self.level = self.levels[level][:]
         else: self.level = [10000000,1,180,2,3,1,time.time()]
@@ -452,20 +465,27 @@ class Main:
         levelnum = self.levels.index(self.level)
         ui.movemenu('complete','down')
         del ui.backchain[-1]
+        ui.delete('first time comp',False)
+        if self.userdata['highscores'][levelnum] == '-' or self.building.stats[2]>self.userdata['highscores'][levelnum]:
+            if self.building.stats[2]>self.level[4] and (self.userdata['highscores'][levelnum] == '-' or self.userdata['highscores'][levelnum]<self.level[4]):
+                self.userdata['coins']+=self.building.stats[3]
+                ui.maketext(200,265,'Unlocked Level '+str(levelnum+2),40,'complete',backingcol=(115,115,115),center=True,ID='first time comp')
+                
+            self.userdata['highscores'][levelnum] = self.building.stats[2]
+
         ui.IDs['level complete title'].text = f'Level {levelnum+1} Complete'
         ui.IDs['level complete title'].refresh(ui)
         ui.IDs['complete table'].data = [[a,self.building.stats[i]] for i,a in enumerate(['Angered','Completed','score','Coins'])]
+        ui.IDs['complete table'].data[2][1] = f'{ui.IDs["complete table"].data[2][1]}/{self.level[4]}'
+        ui.IDs['complete table'].data[1][1] = f'{ui.IDs["complete table"].data[1][1]}/{self.level[0]}'
         ui.IDs['complete table'].boxheight=45
         ui.IDs['complete table'].refresh(ui)
 
-        if self.userdata['highscores'][levelnum] == '-' or self.building.stats[2]>self.userdata['highscores'][levelnum]:
-            self.userdata['highscores'][levelnum] = self.building.stats[2]
-        self.userdata['unlocked'] = 1
-        while (self.userdata['highscores'][self.userdata['unlocked']-1] != '-' and self.userdata['highscores'][self.userdata['unlocked']-1]>self.levels[self.userdata['unlocked']-1][4]):
-            self.userdata['unlocked']+=1
+        self.checkunlocked()
         self.refreshleveltable()
+        self.updatecoindisplay()
         self.storedata()
-            
+        
     def refreshleveltable(self):
         ui.IDs['level tables'].wipe(ui)
         data = []
@@ -478,26 +498,26 @@ class Main:
         ui.IDs['level tables'].refresh(ui)
     def makebuybar(self,item,x=0,y=0):
         upgrades = 20
-        if item+'buybar' in ui.IDs:
-            ui.IDs[item+'buybar'].wipe(ui)
-        else:
-            ui.maketable(x,y-19,[[]],menu='upgrades',ID=item+'buybar',roundedcorners=4,boxwidth=[60,40]+[20 for a in range(upgrades)]+[40])
-        cost = 2**self.userdata['real upgrades'][item]
-        if item == 'lifts': cost = (cost**2)*2
+        if not(item+'buybar' in ui.IDs):
+            ui.maketable(x,y-19,[[]],menu='upgrades',ID=item+'buybar',roundedcorners=4,boxwidth=[60,40]+[20 for a in range(upgrades)]+[40],boxheight=[34])
+        ui.IDs[item+'buybar'].wipe(ui)
+        cost = round(self.userdata['real upgrades'][item]**1.6)
+        if item == 'lifts': cost*=12
         elif item == 'lift capacity': cost*=3
         
         func = funcerbuy(item,cost,self)
-        data = [ui.makebutton(0,0,str(cost),30,func.func,roundedcorners=4),'-']
+        func2 = funcersl(item,self)
+        data = [ui.makebutton(0,0,str(cost),30,func.func,roundedcorners=4),ui.makebutton(0,0,'-',30,func2.func,roundedcorners=4)]
         for a in range(upgrades):
             col = (120,120,120)
-            if a<self.userdata['upgrades'][item]: col = (120,160,120)
-            if a<self.userdata['real upgrades'][item]: col = (100,250,140)
+            if a<self.userdata['real upgrades'][item]: col = (120,160,120)
+            if a<self.userdata['upgrades'][item]: col = (100,250,140)
             data.append(ui.maketext(0,0,'',10,backingcol=col,roundedcorners=4))
-        data.append('+')
+        func = funcersr(item,self)
+        data.append(ui.makebutton(0,0,'+',30,func.func,roundedcorners=4,textoffsety=-1))
         ui.IDs[item+'buybar'].data = [data]
         ui.IDs[item+'buybar'].refresh(ui)
-                        
-                
+                              
     def buy(self,item,cost):
         if self.userdata['coins']>=cost:
             if self.userdata['real upgrades'][item]<20:
@@ -507,9 +527,31 @@ class Main:
                 self.makebuybar(item)
                 self.updatecoindisplay()
                 self.storedata()
+    def shiftleft(self,item):
+        if self.userdata['upgrades'][item]>1:
+            self.userdata['upgrades'][item]-=1
+            self.makebuybar(item)
+            self.updatecoindisplay()
+    def shiftright(self,item):
+        if self.userdata['upgrades'][item]<self.userdata['real upgrades'][item]:
+            self.userdata['upgrades'][item]+=1
+            self.makebuybar(item)
+            self.updatecoindisplay()
     def updatecoindisplay(self):
         ui.IDs['coin display'].text = str(self.userdata['coins'])
-        ui.IDs['coin display'].refresh(ui) 
+        ui.IDs['coin display'].refresh(ui)
+        for a in list(self.userdata['upgrades']):
+            if int(ui.IDs[a+'buybar'].data[0][0].text)<=self.userdata['coins']:
+                ui.IDs[a+'buybar'].data[0][0].col = (39,151,70)
+            else:
+                ui.IDs[a+'buybar'].data[0][0].col = (226,61,48)
+            ui.IDs[a+'buybar'].data[0][0].backingcol = pyui.autoshiftcol(-1,ui.IDs[a+'buybar'].data[0][0].col,20)
+            ui.IDs[a+'buybar'].data[0][0].hovercol = pyui.autoshiftcol(-1,ui.IDs[a+'buybar'].data[0][0].col,-20)
+            ui.IDs[a+'buybar'].data[0][0].refresh(ui)
+    def checkunlocked(self):
+        self.userdata['unlocked'] = 1
+        while (self.userdata['highscores'][self.userdata['unlocked']-1] != '-' and self.userdata['highscores'][self.userdata['unlocked']-1]>self.levels[self.userdata['unlocked']-1][4]):
+            self.userdata['unlocked']+=1
         
     def main(self):
         done = False
@@ -545,6 +587,7 @@ class Main:
             item = f.readlines()[0]
         exec('globaluserdata = '+item,globals())
         self.userdata = globaluserdata
+        self.checkunlocked()
     def cleardata(self):
         self.userdata = {'unlocked':1,'highscores':['-' for a in range(len(self.levels))],'coins':0,
                      'upgrades':{'lifts':1,'lift speed':1,'load speed':1,'door speed':1,'lift capacity':1,'floor speed':1}}
